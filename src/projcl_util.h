@@ -8,4 +8,4 @@
 
 #define DEG_TO_RAD     .017453292519943295
 
-void _pl_copy_pad(float *dest, size_t dest_count, const float *src, size_t src_count);
+void _pl_copy_pad(double *dest, size_t dest_count, const double *src, size_t src_count);

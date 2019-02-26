@@ -159,7 +159,8 @@ endif(APPLE)
 
 
 
-set(WITH_PROJ FALSE CACHE BOOL "Choose if Proj support should be built")
+set(WITH_PROJ TRUE CACHE BOOL "Choose if Proj support should be built")
+set(WITH_JNI TRUE CACHE BOOL "Choose if JNI support should be built")
 set(PROJCL_LIBRARY projcl)
 
 if (WITH_PROJ)
@@ -188,10 +189,14 @@ else()
 endif()
 
 
-include_directories(${PROJ_INCLUDE_DIR} ${OPENCL_INCLUDE_DIRS} ${CBLAS_INCLUDE_DIR})
+include_directories(${PROJ4_INCLUDE_DIR} ${OPENCL_INCLUDE_DIRS} ${CBLAS_INCLUDE_DIR} ${JNI_INCLUDE_DIRS})
 
 set(PROJCL_DEPENDENT_LIBRARIES ${OPENCL_LIBRARIES} ${PROJ4_LIBRARIES} ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES} ${CBLAS_LIBRARIES} ${RANDOM_LINUX_LIBRARIES}
 )
 add_subdirectory(src)
 
 add_subdirectory(test)
+
+if (WITH_JNI)
+   add_subdirectory(jni)
+endif (WITH_JNI)

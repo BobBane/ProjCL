@@ -12,6 +12,9 @@ set(PROJCL_C
   projcl_geodesic.c
   projcl_kernel.c
   projcl_kernel.h
+  projcl_kernel_sources.c
+  projcl_kernel_sources.h
+  projcl_kernel_sources_text.h
   projcl_params.c
   projcl_project.c
   projcl_run.c
@@ -35,3 +38,12 @@ set(PROJCL_SOURCES
 add_library(${PROJCL_LIBRARY} SHARED ${PROJCL_SOURCES})
 target_link_libraries(${PROJCL_LIBRARY} ${PROJCL_DEPENDENT_LIBRARIES})
 
+# projcl_kernel_sources_text.h is special - it is created from the
+# kernel/*.opencl files next door, like this:
+
+FILE(GLOB KernelSources ../kernel/*.opencl)
+# message(STATUS "Kernel sources are ${KernelSources}")
+add_custom_command( OUTPUT projcl_kernel_sources_text.h
+		    DEPENDS ${KernelSources}
+		    COMMAND ../kernel/make_projcl_kernel_sources_text.sh
+		    )

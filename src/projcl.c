@@ -10,6 +10,7 @@
 
 #include <projcl/projcl.h>
 #include <projcl/projcl_warp.h>
+#include "projcl_kernel_sources.h"
 
 #include <dirent.h>
 #include <stdlib.h>
@@ -92,6 +93,11 @@ static pl_module_t _pl_modules[] = {
         .file = "pl_project_winkel_tripel.opencl",
         .module = PL_MODULE_WINKEL_TRIPEL
     }
+    /*
+   ,{
+        .file = "pl_project_stereographic.opencl",
+        .module = PL_MODULE_STEREOGRAPHIC
+	} */
 };
 
 #define PL_DEBUG 0
@@ -212,19 +218,24 @@ void pl_context_free(PLContext *pl_ctx) {
 	free(pl_ctx);
 }
 
-PLCode *pl_compile_code(PLContext *pl_ctx, const char *path, long modules, cl_int *outError) {
+// Little piece of debugging crap
+void dump_kernel_buffers(char *buffer, char **pointers, int entry_index)
+{
+  fprintf(stderr, "ENTRY_INDEX: %d\n", entry_index);
+  int i;
+  for(i=0; i < entry_index; i++) {
+    fprintf(stderr, "POINTER[%d]\n", i);
+    fprintf(stderr, "%s\n", pointers[i]);
+  }
+}
+
+PLCode *pl_compile_code(PLContext *pl_ctx, long modules, cl_int *outError) {
 	cl_int error;
 	cl_program program;
 	
-	DIR *dir = opendir(path);
-	if (dir == NULL) {
-        if (outError)
-            *outError = 1;
-		return NULL;
-	}
-	struct dirent *entry;
     size_t bytes_read;
-	char buffer[1024*1024];
+#define BUF_SIZE (1024*1024)
+    char *buffer;
     char filename[1024];
 	char * pointers[256];
 	size_t buf_used = 0;
@@ -237,77 +248,54 @@ PLCode *pl_compile_code(PLContext *pl_ctx, const char *path, long modules, cl_in
 
     if (modules == 0)
         modules = ~0;
-    
+    /* Allocate the buffer (used to be on the stack - BAD idea in potentially
+       JNI code) */
+    buffer = malloc(BUF_SIZE);
+    if(buffer == NULL)
+      return NULL;
+    /* Sanity check on kernel sources */
+    // dump_kernel_sources();
+
     /* First read the header file */
-    if (strlen(path) + sizeof(PL_OPENCL_KERNEL_HEADER_FILE) + 1 < sizeof(filename)) {
-        pointers[entry_index++] = buffer + buf_used;
-        sprintf(filename, "%s/" PL_OPENCL_KERNEL_HEADER_FILE, path);
-        int fd = open(filename, O_RDONLY);
-        if (fd == -1) {
-            return NULL;
-        }
-        while ((bytes_read = read(fd, buffer + buf_used, sizeof(buffer) - buf_used - 1)) > 0) {
-            buf_used += bytes_read;
-        }
-        buffer[buf_used++] = '\0';
-        close(fd);
+    const char *header_text = find_kernel_source(PL_OPENCL_KERNEL_HEADER_FILE);
+    if (header_text == NULL) {
+      free(buffer);
+      return NULL;
     }
+    pointers[entry_index++] = buffer + buf_used;
+    strcpy(buffer + buf_used, header_text);
+    buf_used += strlen(header_text) + 1;
     
     /* Then read the routine files */
-	while ((entry = readdir(dir)) != NULL) {
-		if (entry_index >= sizeof(pointers)/sizeof(char *) - 1) {
-			break;
-		}
-		if (buf_used >= sizeof(buffer)) {
-			break;
-		}
-		
-		size_t len = strlen(entry->d_name);
-		const char *name = entry->d_name;
-        
-		if (len > sizeof(PL_OPENCL_FILE_EXTENSION)-1 
-            && strncasecmp(name, PL_OPENCL_KERNEL_FILE_PREFIX, sizeof(PL_OPENCL_KERNEL_FILE_PREFIX) - 1) == 0
-            && strcasecmp(name + len - (sizeof(PL_OPENCL_FILE_EXTENSION)-1), PL_OPENCL_FILE_EXTENSION) == 0) {
-            int i;
-            int compile = 0;
-            for (i=0; i<sizeof(_pl_modules)/sizeof(_pl_modules[0]); i++) {
-                if (strcmp(name, _pl_modules[i].file) == 0) {
-                    compile = !!(modules & _pl_modules[i].module);
-                    break;
-                }
-            }
-            if (!compile)
-                continue;
 
-            if (strlen(path) + strlen(name) + 2 < sizeof(filename)) {
-				pointers[entry_index++] = buffer + buf_used;
-				sprintf(filename, "%s/%s", path, name);
-				int fd = open(filename, O_RDONLY);
-				if (fd == -1) {
-					continue;
-				}
-				while ((bytes_read = read(fd, buffer + buf_used, sizeof(buffer) - buf_used - 1)) > 0) {
-					buf_used += bytes_read;
-				}
-				buffer[buf_used++] = '\0';
-				close(fd);
-                
-                char *p = pointers[entry_index-1];
-				while ((p = strstr(p, "__kernel")) != NULL) {
-					kernel_count++;
-                    p += sizeof("__kernel")-1;
-				}
-			}
-		}
-	} 
-	
-	closedir(dir);
-	
-	if (entry_index == 0) {
-        if (outError)
-            *outError = 2;
-		return NULL;
+    /* Actually find and compile requested stuff in modules bit vector */
+    int i;
+    for(i=0; i<sizeof(_pl_modules)/sizeof(_pl_modules[0]); i++) {
+      if (!!(modules & _pl_modules[i].module)) {
+	const char *module_text = find_kernel_source(_pl_modules[i].file);
+	if (module_text == NULL) {
+	  free(buffer);
+	  return NULL;
 	}
+	/* found it, copy into buffer */
+	pointers[entry_index++] = buffer + buf_used;
+	strcpy(buffer + buf_used, module_text);
+	buf_used += strlen(module_text) + 1;
+	/* and count the kernels */
+	char *p = pointers[entry_index-1];
+	while ((p = strstr(p, "__kernel")) != NULL) {
+	  kernel_count++;
+	  p += sizeof("__kernel")-1;
+	}
+      }
+    }
+	
+    if (entry_index == 0) {
+      if (outError)
+	*outError = 2;
+      free(buffer);
+      return NULL;
+    }
 	
 	pointers[entry_index] = NULL;
 	program = clCreateProgramWithSource(pl_ctx->ctx, entry_index, (const char **)pointers, NULL, &error);
@@ -315,6 +303,7 @@ PLCode *pl_compile_code(PLContext *pl_ctx, const char *path, long modules, cl_in
 	if (error != CL_SUCCESS) {
 		if (outError != NULL)
 			*outError = error;
+		free(buffer);
 		return NULL;
 	}
 	
@@ -338,6 +327,8 @@ PLCode *pl_compile_code(PLContext *pl_ctx, const char *path, long modules, cl_in
 		if (outError != NULL)
 			*outError = error;
 		clReleaseProgram(program);
+	dump_kernel_buffers(buffer, pointers, entry_index);
+		free(buffer);
 		return NULL;
 	}
 	
@@ -345,6 +336,8 @@ PLCode *pl_compile_code(PLContext *pl_ctx, const char *path, long modules, cl_in
 	if ((pl_code = malloc(sizeof(PLCode))) == NULL) {
 		if (outError != NULL)
 			*outError = CL_OUT_OF_HOST_MEMORY;
+	dump_kernel_buffers(buffer, pointers, entry_index);
+		free(buffer);
 		return NULL;
 	}
 	
@@ -359,6 +352,7 @@ PLCode *pl_compile_code(PLContext *pl_ctx, const char *path, long modules, cl_in
     pl_ctx->last_time = (end_time.tv_sec + end_time.tv_usec * 1e-6)
         - (start_time.tv_sec + start_time.tv_usec * 1e-6);
 	
+    free(buffer);
 	return pl_code;
 }
 

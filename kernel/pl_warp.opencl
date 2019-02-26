@@ -2,9 +2,9 @@
 
 
 __kernel void pl_load_grid(
-                           __global float2 *grid,
-                           float2 origin,
-                           float2 size
+                           __global double2 *grid,
+                           double2 origin,
+                           double2 size
 ) {
     int i = get_global_id(0);
     int j = get_global_id(1);
@@ -17,14 +17,14 @@ __kernel void pl_load_grid(
 }
 
 __kernel void pl_cartesian_apply_affine_transform_2d(
-    __global float16 *xy_in,
-    __global float16 *xy_out,
-    float8 matrix
+    __global double16 *xy_in,
+    __global double16 *xy_out,
+    double8 matrix
 ) {
     int i = get_global_id(0);
 
-    float8 x = xy_in[i].even;
-    float8 y = xy_in[i].odd;
+    double8 x = xy_in[i].even;
+    double8 y = xy_in[i].odd;
     
     xy_out[i].even = matrix.s0 * x + matrix.s1 * y + matrix.s2;
     xy_out[i].odd = matrix.s3 * x + matrix.s4 * y + matrix.s5;

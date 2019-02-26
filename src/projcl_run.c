@@ -48,6 +48,8 @@ static cl_int pl_enqueue_kernel_transverse_mercator(PLContext *pl_ctx, cl_kernel
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count);
 static cl_int pl_enqueue_kernel_winkel_tripel(PLContext *pl_ctx, cl_kernel kernel,
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count);
+static cl_int pl_enqueue_stereographic(PLContext *pl_ctx, cl_kernel kernel,
+        PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count);
 
 struct pl_projection_info {
     PLProjection proj;
@@ -105,6 +107,11 @@ static struct pl_projection_info _pl_projection_info[] = {
         .proj = PL_PROJECT_WINKEL_TRIPEL,
         .name = "winkel_tripel",
         .func = &pl_enqueue_kernel_winkel_tripel,
+    },
+    {
+        .proj = PL_PROJECT_STEREOGRAPHIC,
+        .name = "stereographic",
+        .func = &pl_enqueue_stereographic,
     }
 };
 
@@ -233,7 +240,7 @@ static double _pl_tsfn(double phi, double sinphi, double e) {
 static cl_int _pl_set_projection_kernel_args(PLContext *ctx, cl_kernel kernel,
         cl_mem xy_in, cl_mem xy_out, size_t count, PLSpheroidInfo *info, int *offset_ptr) {
 	cl_int error = 0;
-	cl_uint vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+	cl_uint vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	int offset = *offset_ptr;
 
 	error |= pl_set_kernel_arg_mem(ctx, kernel, offset++, xy_in);
@@ -241,9 +248,9 @@ static cl_int _pl_set_projection_kernel_args(PLContext *ctx, cl_kernel kernel,
 	error |= pl_set_kernel_arg_uint(ctx, kernel, offset++, vec_count);
 	
 	if (!_pl_spheroid_is_spherical(info->tag)) {
-        error |= pl_set_kernel_arg_float(ctx, kernel, offset++, info->ecc);
-        error |= pl_set_kernel_arg_float(ctx, kernel, offset++, info->ecc2);
-        error |= pl_set_kernel_arg_float(ctx, kernel, offset++, info->one_ecc2);
+        error |= pl_set_kernel_arg_double(ctx, kernel, offset++, info->ecc);
+        error |= pl_set_kernel_arg_double(ctx, kernel, offset++, info->ecc2);
+        error |= pl_set_kernel_arg_double(ctx, kernel, offset++, info->one_ecc2);
 	}
 	
 	*offset_ptr = offset;
@@ -268,7 +275,7 @@ static cl_int _pl_enqueue_kernel_1d(cl_command_queue queue, cl_kernel kernel, si
     return error;
 }
 
-cl_int pl_read_buffer(cl_command_queue queue, cl_mem xy_out_buf, float *xy_out, size_t out_count) {
+cl_int pl_read_buffer(cl_command_queue queue, cl_mem xy_out_buf, double *xy_out, size_t out_count) {
     cl_int error;
 
     error = clEnqueueReadBuffer(queue, xy_out_buf, CL_TRUE, 0, out_count, xy_out, 0, NULL, NULL);
@@ -282,15 +289,15 @@ cl_int pl_read_buffer(cl_command_queue queue, cl_mem xy_out_buf, float *xy_out, 
 	return CL_SUCCESS;
 }
 
-cl_int pl_read_buffer_2(cl_command_queue queue, cl_mem xy_out_buf, float *x_out, float *y_out, size_t out_count_bytes) {
+cl_int pl_read_buffer_2(cl_command_queue queue, cl_mem xy_out_buf, double *x_out, double *y_out, size_t out_count_bytes) {
     cl_int error;
     // out_count_bytes is in bytes, but clEnqueueReadBufferRect counts stuff in
     // actual array elements, so...
-    size_t out_count = out_count_bytes / sizeof(float);
+    size_t out_count = out_count_bytes / sizeof(double);
 
 	size_t buffer_origin[3] = {0,0,0};
 	size_t host_origin[3] = {0,0,0};
-	size_t bh_region[3] = {sizeof(float), out_count/2, 1};
+	size_t bh_region[3] = {sizeof(double), out_count/2, 1};
 	// First, the x's
 	error = clEnqueueReadBufferRect(queue,
 					xy_out_buf,
@@ -298,9 +305,9 @@ cl_int pl_read_buffer_2(cl_command_queue queue, cl_mem xy_out_buf, float *x_out,
 					buffer_origin,
 					host_origin,
 					bh_region,
-					2*sizeof(float), // buffer_row_pitch,
+					2*sizeof(double), // buffer_row_pitch,
 					0,               // buffer_slice_pitch,
-					1*sizeof(float), // host_row_pitch,
+					1*sizeof(double), // host_row_pitch,
 					0,               // host_slice_pitch,
 					x_out,
 					0,     // num_events_in_wait_list,
@@ -317,16 +324,16 @@ cl_int pl_read_buffer_2(cl_command_queue queue, cl_mem xy_out_buf, float *x_out,
 		return error;
 
 	// Then, the y's, which are like the x's with minor offsets
-	buffer_origin[0] = 1 * sizeof(float);
+	buffer_origin[0] = 1 * sizeof(double);
 	error = clEnqueueReadBufferRect(queue,
 					xy_out_buf,
 					CL_TRUE,  // non-blocking
 					buffer_origin,
 					host_origin,
 					bh_region,
-					2*sizeof(float), // buffer_row_pitch,
+					2*sizeof(double), // buffer_row_pitch,
 					0,               // buffer_slice_pitch,
-					1*sizeof(float), // host_row_pitch,
+					1*sizeof(double), // host_row_pitch,
 					0,               // host_slice_pitch,
 					y_out,
 					0,     // num_events_in_wait_list,
@@ -371,7 +378,7 @@ cl_int pl_enqueue_kernel_albers_equal_area(PLContext *pl_ctx, cl_kernel kernel,
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count) {
 	cl_int error = CL_SUCCESS;
 	cl_int argc = 0;
-	size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+	size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	PLSpheroidInfo info = _pl_get_spheroid_info(params->spheroid);
 	error = _pl_set_projection_kernel_args(pl_ctx, kernel, xy_in, xy_out, count, &info, &argc);
 	
@@ -410,15 +417,15 @@ cl_int pl_enqueue_kernel_albers_equal_area(PLContext *pl_ctx, cl_kernel kernel,
 	}
 	
 	if (!_pl_spheroid_is_spherical(params->spheroid)) {
-		error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, info.ec);
+		error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, info.ec);
 	}
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->scale * info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->x0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->y0);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, rho0);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, c);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, n);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->scale * info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->x0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->y0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, rho0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, c);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, n);
     
 	if (error != CL_SUCCESS)
 		return error;
@@ -430,7 +437,7 @@ cl_int pl_enqueue_kernel_american_polyconic(PLContext *pl_ctx,cl_kernel kernel,
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count) {
 	cl_int error;
 	cl_int offset = 0;
-	size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+	size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	PLSpheroidInfo info = _pl_get_spheroid_info(params->spheroid);
 	error = _pl_set_projection_kernel_args(pl_ctx, kernel, xy_in, xy_out, count, &info, &offset);
 	
@@ -438,14 +445,14 @@ cl_int pl_enqueue_kernel_american_polyconic(PLContext *pl_ctx,cl_kernel kernel,
 	
 	double ml0 = _pl_mlfn(phi0, sin(phi0), cos(phi0), info.en);
 	
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->scale * info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->x0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->y0);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, phi0);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->lon0 * DEG_TO_RAD);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->scale * info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->x0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->y0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, phi0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->lon0 * DEG_TO_RAD);
     if (!_pl_spheroid_is_spherical(params->spheroid)) {
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, ml0);
-        error |= pl_set_kernel_arg_float8(pl_ctx, kernel, offset++, info.en);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, ml0);
+        error |= pl_set_kernel_arg_double8(pl_ctx, kernel, offset++, info.en);
     }
 	if (error != CL_SUCCESS) {
 		return error;
@@ -458,20 +465,20 @@ cl_int pl_enqueue_kernel_lambert_azimuthal_equal_area(PLContext *pl_ctx, cl_kern
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count) {
     cl_int error;
     cl_int offset = 0;
-    size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	PLSpheroidInfo info = _pl_get_spheroid_info(params->spheroid);
 	error = _pl_set_projection_kernel_args(pl_ctx, kernel, xy_in, xy_out, count, &info, &offset);
     
 	double phi0 = params->lat0 * DEG_TO_RAD;
 
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->scale * info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->x0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->y0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, phi0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->lon0 * DEG_TO_RAD);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->scale * info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->x0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->y0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, phi0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->lon0 * DEG_TO_RAD);
     if (_pl_spheroid_is_spherical(params->spheroid)) {
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, sin(phi0));
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, cos(phi0));
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, sin(phi0));
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, cos(phi0));
     } else {
         double qp = _pl_qsfn(1.0, info.ecc, info.one_ecc2);
         double sinPhi = sin(phi0);
@@ -483,16 +490,16 @@ cl_int pl_enqueue_kernel_lambert_azimuthal_equal_area(PLContext *pl_ctx, cl_kern
         double ymf = rq / dd;
         double xmf = rq * dd;
 
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, qp);
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, sinB1);
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, cosB1);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, qp);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, sinB1);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, cosB1);
 
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, rq);
-        error |= pl_set_kernel_arg_float4(pl_ctx, kernel, offset++, info.apa);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, rq);
+        error |= pl_set_kernel_arg_double4(pl_ctx, kernel, offset++, info.apa);
 
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, dd);
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, xmf);
-        error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, ymf);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, dd);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, xmf);
+        error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, ymf);
     }
     if (error != CL_SUCCESS) {
 		return error;
@@ -506,7 +513,7 @@ cl_int pl_enqueue_kernel_lambert_conformal_conic(PLContext *pl_ctx, cl_kernel ke
     cl_int error;
     cl_int offset = 0;
     
-    size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
     PLSpheroidInfo info = _pl_get_spheroid_info(params->spheroid);
     error = _pl_set_projection_kernel_args(pl_ctx, kernel, xy_in, xy_out, count, &info, &offset);
     
@@ -544,13 +551,13 @@ cl_int pl_enqueue_kernel_lambert_conformal_conic(PLContext *pl_ctx, cl_kernel ke
         rho0 = c * pow(_pl_tsfn(phi0, sin(phi0), info.ecc), n);
     }
     
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->scale * info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->x0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->y0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->lon0 * DEG_TO_RAD);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, rho0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, c);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, n);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->scale * info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->x0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->y0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->lon0 * DEG_TO_RAD);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, rho0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, c);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, n);
     
     if (error != CL_SUCCESS) {
 		return error;
@@ -563,14 +570,14 @@ cl_int pl_enqueue_kernel_mercator(PLContext *pl_ctx, cl_kernel kernel,
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count) {
 	cl_int error;
 	cl_int offset = 0;
-	size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+	size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	
 	PLSpheroidInfo info = _pl_get_spheroid_info(params->spheroid);
 	error = _pl_set_projection_kernel_args(pl_ctx, kernel, xy_in, xy_out, count, &info, &offset);
 	
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->scale * info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->x0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, offset++, params->y0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->scale * info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->x0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, offset++, params->y0);
 	if (error != CL_SUCCESS) {
 		return error;
 	}
@@ -581,7 +588,7 @@ cl_int pl_enqueue_kernel_oblique_stereographic(PLContext *pl_ctx, cl_kernel kern
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count) {
 	cl_int error = CL_SUCCESS;
 	cl_int argc = 0;
-	size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+	size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	PLSpheroidInfo info = _pl_get_spheroid_info(params->spheroid);
 
 	error = _pl_set_projection_kernel_args(pl_ctx, kernel, xy_in, xy_out, count, &info, &argc);
@@ -595,9 +602,9 @@ cl_int pl_enqueue_kernel_oblique_stereographic(PLContext *pl_ctx, cl_kernel kern
     double sinPhiC0, cosPhiC0;
     double scale_r2 = 2.0 * params->scale * info.major_axis * sqrt(info.one_ecc2) / (1.0 - info.ecc2 * sinPhi0 * sinPhi0);
 
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, scale_r2);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->x0);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->y0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, scale_r2);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->x0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->y0);
 
 	if (!_pl_spheroid_is_spherical(params->spheroid)) {
         double c0 = sqrt(1.0 + info.ecc2 * cosPhi0 * cosPhi0 * cosPhi0 * cosPhi0 / info.one_ecc2);
@@ -609,16 +616,16 @@ cl_int pl_enqueue_kernel_oblique_stereographic(PLContext *pl_ctx, cl_kernel kern
                 pow(tan(0.5 * phi0 + M_PI_4), c0) *
                 pow((1.-info.ecc * sinPhi0)/(1.+info.ecc*sinPhi0), 0.5 * c0 * info.ecc) );
 
-		error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, c0);
-		error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, log(k0));
+		error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, c0);
+		error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, log(k0));
 	} else {
         sinPhiC0 = sinPhi0;
         cosPhiC0 = cosPhi0;
     }
 
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, sinPhiC0);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, cosPhiC0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, sinPhiC0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, cosPhiC0);
 	if (error != CL_SUCCESS)
 		return error;
 	
@@ -636,9 +643,9 @@ cl_int pl_enqueue_kernel_robinson(PLContext *pl_ctx, cl_kernel kernel,
 	error |= pl_set_kernel_arg_mem(pl_ctx, kernel, argc++, xy_out);
 	error |= pl_set_kernel_arg_uint(pl_ctx, kernel, argc++, count);
 
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->scale * info.major_axis);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->x0);
-	error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->y0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->scale * info.major_axis);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->x0);
+	error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->y0);
 	if (error != CL_SUCCESS)
 		return error;
 	
@@ -649,18 +656,18 @@ cl_int pl_enqueue_kernel_transverse_mercator(PLContext *pl_ctx, cl_kernel kernel
         PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count) {
     cl_int error = CL_SUCCESS;
     cl_int argc = 0;
-    size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
     
     PLSpheroidInfo info = _pl_get_spheroid_info(params->spheroid);
     error = _pl_set_projection_kernel_args(pl_ctx, kernel, xy_in, xy_out, count, &info, &argc);
     
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->scale * info.major_axis * info.krueger_A);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->x0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->y0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->scale * info.major_axis * info.krueger_A);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->x0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->y0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
     if (!_pl_spheroid_is_spherical(params->spheroid)) {
-        error |= pl_set_kernel_arg_float8(pl_ctx, kernel, argc++, info.krueger_alpha);
-        error |= pl_set_kernel_arg_float8(pl_ctx, kernel, argc++, info.krueger_beta);
+        error |= pl_set_kernel_arg_double8(pl_ctx, kernel, argc++, info.krueger_alpha);
+        error |= pl_set_kernel_arg_double8(pl_ctx, kernel, argc++, info.krueger_beta);
     }
     if (error != CL_SUCCESS)
         return error;
@@ -673,7 +680,7 @@ cl_int pl_enqueue_kernel_winkel_tripel(PLContext *pl_ctx, cl_kernel kernel,
     cl_int error = CL_SUCCESS;
     int argc = 0;
     
-    size_t vec_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
     
     PLSpheroidInfo info = _pl_get_spheroid_info(PL_SPHEROID_SPHERE);
     
@@ -682,11 +689,11 @@ cl_int pl_enqueue_kernel_winkel_tripel(PLContext *pl_ctx, cl_kernel kernel,
     error |= pl_set_kernel_arg_mem(pl_ctx, kernel, argc++, xy_in);
 	error |= pl_set_kernel_arg_mem(pl_ctx, kernel, argc++, xy_out);
 	error |= pl_set_kernel_arg_uint(pl_ctx, kernel, argc++, vec_count);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->scale * info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->x0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->y0);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
-    error |= pl_set_kernel_arg_float(pl_ctx, kernel, argc++, cosphi1);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->scale * info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->x0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->y0);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, params->lon0 * DEG_TO_RAD);
+    error |= pl_set_kernel_arg_double(pl_ctx, kernel, argc++, cosphi1);
     
     if (error != CL_SUCCESS)
         return error;
@@ -694,18 +701,33 @@ cl_int pl_enqueue_kernel_winkel_tripel(PLContext *pl_ctx, cl_kernel kernel,
     return _pl_enqueue_kernel_1d(pl_ctx->queue, kernel, vec_count);
 }
 
+cl_int pl_enqueue_stereographic(PLContext *pl_ctx, cl_kernel kernel,
+        PLProjectionParams *params, cl_mem xy_in, cl_mem xy_out, size_t count) {
+    cl_int error = CL_SUCCESS;
+    int argc = 0;
+    
+    size_t vec_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
+
+    // Actual argument handling happens here...
+
+    if (error != CL_SUCCESS)
+        return error;
+    
+    return _pl_enqueue_kernel_1d(pl_ctx->queue, kernel, vec_count);
+}
+
 cl_int pl_run_kernel_inverse_geodesic( PLContext *pl_ctx, cl_kernel inv_kernel,
-        PLInverseGeodesicBuffer *pl_buf, float *dist_out, PLSpheroid pl_ell, double scale) {
+        PLInverseGeodesicBuffer *pl_buf, double *dist_out, PLSpheroid pl_ell, double scale) {
 	int argc = 0;
 	cl_int error = CL_SUCCESS;
 	PLSpheroidInfo info = _pl_get_spheroid_info(pl_ell);
 	
-	size_t xy2VecCount = ck_padding(pl_buf->xy2_count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+	size_t xy2VecCount = ck_padding(pl_buf->xy2_count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	
 	error |= pl_set_kernel_arg_mem(pl_ctx, inv_kernel, argc++, pl_buf->xy1_in);
 	error |= pl_set_kernel_arg_mem(pl_ctx, inv_kernel, argc++, pl_buf->xy2_in);
 	error |= pl_set_kernel_arg_mem(pl_ctx, inv_kernel, argc++, pl_buf->dist_out);
-	error |= pl_set_kernel_arg_float(pl_ctx, inv_kernel, argc++, info.major_axis);
+	error |= pl_set_kernel_arg_double(pl_ctx, inv_kernel, argc++, info.major_axis);
 	
 	if (error != CL_SUCCESS) {
 		return error;
@@ -718,13 +740,13 @@ cl_int pl_run_kernel_inverse_geodesic( PLContext *pl_ctx, cl_kernel inv_kernel,
 		return error;
 	}
 	
-	float *dist_pad_out;
-	size_t pad_count = 2 * pl_buf->xy1_count * ck_padding(pl_buf->xy2_count, PL_FLOAT_VECTOR_SIZE);
-	if ((dist_pad_out = malloc(sizeof(float) * pad_count)) == NULL) {
+	double *dist_pad_out;
+	size_t pad_count = 2 * pl_buf->xy1_count * ck_padding(pl_buf->xy2_count, PL_DOUBLE_VECTOR_SIZE);
+	if ((dist_pad_out = malloc(sizeof(double) * pad_count)) == NULL) {
 		return CL_OUT_OF_HOST_MEMORY;
 	}
 	
-	error = clEnqueueReadBuffer(pl_ctx->queue, pl_buf->dist_out, CL_TRUE, 0, pad_count * sizeof(cl_float),
+	error = clEnqueueReadBuffer(pl_ctx->queue, pl_buf->dist_out, CL_TRUE, 0, pad_count * sizeof(cl_double),
 								dist_pad_out, 0, NULL, NULL);
 	if (error != CL_SUCCESS) {
 		free(dist_pad_out);
@@ -737,7 +759,7 @@ cl_int pl_run_kernel_inverse_geodesic( PLContext *pl_ctx, cl_kernel inv_kernel,
 		return error;
 	}
 	
-	int j_size = ck_padding(pl_buf->xy2_count, PL_FLOAT_VECTOR_SIZE);
+	int j_size = ck_padding(pl_buf->xy2_count, PL_DOUBLE_VECTOR_SIZE);
     int i, j;
 	
 	for (i=0; i<pl_buf->xy1_count; i++) {
@@ -752,7 +774,7 @@ cl_int pl_run_kernel_inverse_geodesic( PLContext *pl_ctx, cl_kernel inv_kernel,
 }
 
 cl_int pl_run_kernel_forward_geodesic_fixed_distance(PLContext *pl_ctx, cl_kernel fwd_kernel, 
-    PLForwardGeodesicFixedDistanceBuffer *pl_buf, float *xy_out, PLSpheroid pl_ell, double distance) {
+    PLForwardGeodesicFixedDistanceBuffer *pl_buf, double *xy_out, PLSpheroid pl_ell, double distance) {
 	PLSpheroidInfo info = _pl_get_spheroid_info(pl_ell);
 	
 	int argc = 0;
@@ -769,19 +791,19 @@ cl_int pl_run_kernel_forward_geodesic_fixed_distance(PLContext *pl_ctx, cl_kerne
 	error |= pl_set_kernel_arg_mem(pl_ctx, fwd_kernel, argc++, pl_buf->phi_sincos);
 	error |= pl_set_kernel_arg_mem(pl_ctx, fwd_kernel, argc++, pl_buf->az_sincos);
 	error |= pl_set_kernel_arg_mem(pl_ctx, fwd_kernel, argc++, pl_buf->xy_out);
-	error |= pl_set_kernel_arg_float(pl_ctx, fwd_kernel, argc++, D);
-	error |= pl_set_kernel_arg_float(pl_ctx, fwd_kernel, argc++, sinD);
-	error |= pl_set_kernel_arg_float(pl_ctx, fwd_kernel, argc++, cosD);
+	error |= pl_set_kernel_arg_double(pl_ctx, fwd_kernel, argc++, D);
+	error |= pl_set_kernel_arg_double(pl_ctx, fwd_kernel, argc++, sinD);
+	error |= pl_set_kernel_arg_double(pl_ctx, fwd_kernel, argc++, cosD);
 	if (!_pl_spheroid_is_spherical(pl_ell)) {
 		double flattening = 1.f/info.inverse_flattening;
-		error |= pl_set_kernel_arg_float(pl_ctx, fwd_kernel, argc++, flattening);
+		error |= pl_set_kernel_arg_double(pl_ctx, fwd_kernel, argc++, flattening);
 	}
 	if (error != CL_SUCCESS) {
 		return error;
 	}
 	
 	const size_t dim[2] = { pl_buf->xy_count, 
-		ck_padding(pl_buf->az_count, PL_FLOAT_VECTOR_SIZE)/PL_FLOAT_VECTOR_SIZE };
+		ck_padding(pl_buf->az_count, PL_DOUBLE_VECTOR_SIZE)/PL_DOUBLE_VECTOR_SIZE };
 	
 	error = clEnqueueNDRangeKernel(pl_ctx->queue, fwd_kernel, 2, NULL, 
 								   dim, NULL, 0, NULL, NULL);
@@ -790,7 +812,7 @@ cl_int pl_run_kernel_forward_geodesic_fixed_distance(PLContext *pl_ctx, cl_kerne
 	}
 	
 	error = clEnqueueReadBuffer(pl_ctx->queue, pl_buf->xy_out, CL_TRUE, 0, 
-								2 * pl_buf->xy_count * pl_buf->az_count * sizeof(cl_float),
+								2 * pl_buf->xy_count * pl_buf->az_count * sizeof(cl_double),
 								xy_out, 0, NULL, NULL);
 	if (error != CL_SUCCESS) {
 		return error;
@@ -805,22 +827,22 @@ cl_int pl_run_kernel_forward_geodesic_fixed_distance(PLContext *pl_ctx, cl_kerne
 }
 
 cl_int pl_run_kernel_forward_geodesic_fixed_angle(PLContext *pl_ctx, cl_kernel fwd_kernel, 
-    PLForwardGeodesicFixedAngleBuffer *pl_buf, double xy_in[2], float *xy_out, PLSpheroid pl_ell, double angle) {
+    PLForwardGeodesicFixedAngleBuffer *pl_buf, double xy_in[2], double *xy_out, PLSpheroid pl_ell, double angle) {
     int argc = 0;
     
-    size_t distVecCount = ck_padding(pl_buf->dist_count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t distVecCount = ck_padding(pl_buf->dist_count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
     
     cl_int error = CL_SUCCESS;
     
     double sinAzimuth = sin(angle);
     double cosAzimuth = cos(angle);
     
-    error |= pl_set_kernel_arg_float2(pl_ctx, fwd_kernel, argc++, xy_in);
+    error |= pl_set_kernel_arg_double2(pl_ctx, fwd_kernel, argc++, xy_in);
     error |= pl_set_kernel_arg_mem(pl_ctx, fwd_kernel, argc++, pl_buf->dist_in);
     error |= pl_set_kernel_arg_mem(pl_ctx, fwd_kernel, argc++, pl_buf->xy_out);
-    error |= pl_set_kernel_arg_float(pl_ctx, fwd_kernel, argc++, angle);
-    error |= pl_set_kernel_arg_float(pl_ctx, fwd_kernel, argc++, sinAzimuth);
-    error |= pl_set_kernel_arg_float(pl_ctx, fwd_kernel, argc++, cosAzimuth);
+    error |= pl_set_kernel_arg_double(pl_ctx, fwd_kernel, argc++, angle);
+    error |= pl_set_kernel_arg_double(pl_ctx, fwd_kernel, argc++, sinAzimuth);
+    error |= pl_set_kernel_arg_double(pl_ctx, fwd_kernel, argc++, cosAzimuth);
     if (error != CL_SUCCESS) {
         return error;
     }
@@ -832,7 +854,7 @@ cl_int pl_run_kernel_forward_geodesic_fixed_angle(PLContext *pl_ctx, cl_kernel f
     }
     
     error = clEnqueueReadBuffer(pl_ctx->queue, pl_buf->xy_out, CL_TRUE, 0, 
-                                2 * pl_buf->dist_count * sizeof(cl_float), 
+                                2 * pl_buf->dist_count * sizeof(cl_double), 
                                 xy_out, 0, NULL, NULL);
     if (error != CL_SUCCESS) {
         return error;
@@ -852,19 +874,19 @@ cl_int pl_run_kernel_geodesic_to_cartesian(PLContext *pl_ctx, cl_kernel g2c_kern
 
     int argc = 0;
     cl_int error = CL_SUCCESS;
-    size_t vec_count = ck_padding(pl_buf->count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t vec_count = ck_padding(pl_buf->count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
         
     error |= pl_set_kernel_arg_mem(pl_ctx, g2c_kernel, argc++, pl_buf->xy_in);
     error |= pl_set_kernel_arg_mem(pl_ctx, g2c_kernel, argc++, pl_buf->x_rw);
     error |= pl_set_kernel_arg_mem(pl_ctx, g2c_kernel, argc++, pl_buf->y_rw);
     error |= pl_set_kernel_arg_mem(pl_ctx, g2c_kernel, argc++, pl_buf->z_rw);
     
-    error |= pl_set_kernel_arg_float(pl_ctx, g2c_kernel, argc++, info.ecc);
-    error |= pl_set_kernel_arg_float(pl_ctx, g2c_kernel, argc++, info.ecc2);
-    error |= pl_set_kernel_arg_float(pl_ctx, g2c_kernel, argc++, info.one_ecc2);
+    error |= pl_set_kernel_arg_double(pl_ctx, g2c_kernel, argc++, info.ecc);
+    error |= pl_set_kernel_arg_double(pl_ctx, g2c_kernel, argc++, info.ecc2);
+    error |= pl_set_kernel_arg_double(pl_ctx, g2c_kernel, argc++, info.one_ecc2);
     
-    error |= pl_set_kernel_arg_float(pl_ctx, g2c_kernel, argc++, info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, g2c_kernel, argc++, info.minor_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, g2c_kernel, argc++, info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, g2c_kernel, argc++, info.minor_axis);
     
     if (error != CL_SUCCESS)
         return error;
@@ -895,7 +917,7 @@ cl_int pl_run_kernel_transform_cartesian(PLContext *pl_ctx, cl_kernel transform_
     
     cl_int error = CL_SUCCESS;
     int argc = 0;
-    size_t vec_count = ck_padding(pl_buf->count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t vec_count = ck_padding(pl_buf->count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
     
     Dx1 = pl_datum_params[src_datum].dx;
     Dy1 = pl_datum_params[src_datum].dy;
@@ -956,7 +978,7 @@ cl_int pl_run_kernel_transform_cartesian(PLContext *pl_ctx, cl_kernel transform_
     error |= pl_set_kernel_arg_mem(pl_ctx, transform_kernel, argc++, pl_buf->x_rw);
     error |= pl_set_kernel_arg_mem(pl_ctx, transform_kernel, argc++, pl_buf->y_rw);
     error |= pl_set_kernel_arg_mem(pl_ctx, transform_kernel, argc++, pl_buf->z_rw);
-    error |= pl_set_kernel_arg_float16(pl_ctx, transform_kernel, argc++, &tmatrix[0][0]);
+    error |= pl_set_kernel_arg_double16(pl_ctx, transform_kernel, argc++, &tmatrix[0][0]);
     if (error != CL_SUCCESS)
         return error;
     
@@ -969,24 +991,24 @@ cl_int pl_run_kernel_transform_cartesian(PLContext *pl_ctx, cl_kernel transform_
 }
 
 cl_int pl_run_kernel_cartesian_to_geodesic(PLContext *pl_ctx, cl_kernel c2g_kernel, 
-        PLDatumShiftBuffer *pl_buf, float *xy_out, PLSpheroid pl_ell) {
+        PLDatumShiftBuffer *pl_buf, double *xy_out, PLSpheroid pl_ell) {
     PLSpheroidInfo info = _pl_get_spheroid_info(pl_ell);
     
     int argc = 0;
     cl_int error = CL_SUCCESS;
-    size_t vec_count = ck_padding(pl_buf->count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+    size_t vec_count = ck_padding(pl_buf->count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
         
     error |= pl_set_kernel_arg_mem(pl_ctx, c2g_kernel, argc++, pl_buf->x_rw);
     error |= pl_set_kernel_arg_mem(pl_ctx, c2g_kernel, argc++, pl_buf->y_rw);
     error |= pl_set_kernel_arg_mem(pl_ctx, c2g_kernel, argc++, pl_buf->z_rw);
     error |= pl_set_kernel_arg_mem(pl_ctx, c2g_kernel, argc++, pl_buf->xy_out);
     
-    error |= pl_set_kernel_arg_float(pl_ctx, c2g_kernel, argc++, info.ecc);
-    error |= pl_set_kernel_arg_float(pl_ctx, c2g_kernel, argc++, info.ecc2);
-    error |= pl_set_kernel_arg_float(pl_ctx, c2g_kernel, argc++, info.one_ecc2);
+    error |= pl_set_kernel_arg_double(pl_ctx, c2g_kernel, argc++, info.ecc);
+    error |= pl_set_kernel_arg_double(pl_ctx, c2g_kernel, argc++, info.ecc2);
+    error |= pl_set_kernel_arg_double(pl_ctx, c2g_kernel, argc++, info.one_ecc2);
     
-    error |= pl_set_kernel_arg_float(pl_ctx, c2g_kernel, argc++, info.major_axis);
-    error |= pl_set_kernel_arg_float(pl_ctx, c2g_kernel, argc++, info.minor_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, c2g_kernel, argc++, info.major_axis);
+    error |= pl_set_kernel_arg_double(pl_ctx, c2g_kernel, argc++, info.minor_axis);
     if (error != CL_SUCCESS)
         return error;
     
@@ -997,7 +1019,7 @@ cl_int pl_run_kernel_cartesian_to_geodesic(PLContext *pl_ctx, cl_kernel c2g_kern
     
     if (xy_out != NULL) {
         error = clEnqueueReadBuffer(pl_ctx->queue, pl_buf->xy_out, CL_TRUE, 0, 
-                                    2 * pl_buf->count * sizeof(cl_float), xy_out, 0, NULL, NULL);
+                                    2 * pl_buf->count * sizeof(cl_double), xy_out, 0, NULL, NULL);
         if (error != CL_SUCCESS)
             return error;
     }

@@ -14,7 +14,7 @@
 #include "projcl_spheroid.h"
 
 PLForwardGeodesicFixedDistanceBuffer *pl_load_forward_geodesic_fixed_distance_data(PLContext *pl_ctx,
-    const float *xy_in, size_t xy_count, const float *az_in, size_t az_count, cl_int *outError)
+    const double *xy_in, size_t xy_count, const double *az_in, size_t az_count, cl_int *outError)
 {
 	cl_int error;
 	
@@ -30,16 +30,16 @@ PLForwardGeodesicFixedDistanceBuffer *pl_load_forward_geodesic_fixed_distance_da
 	pl_buf->az_sincos = NULL;
 	
 	
-	float *az_pad_in = NULL, *xy_pad_in = NULL;
+	double *az_pad_in = NULL, *xy_pad_in = NULL;
 	
-	int az_pad_count = ck_padding(az_count, PL_FLOAT_VECTOR_SIZE);
-	int xy_pad_count = ck_padding(xy_count, PL_FLOAT_VECTOR_SIZE);
+	int az_pad_count = ck_padding(az_count, PL_DOUBLE_VECTOR_SIZE);
+	int xy_pad_count = ck_padding(xy_count, PL_DOUBLE_VECTOR_SIZE);
 	
-	if ((az_pad_in = malloc(az_pad_count * sizeof(float))) == NULL) {
+	if ((az_pad_in = malloc(az_pad_count * sizeof(double))) == NULL) {
 		error = CL_OUT_OF_HOST_MEMORY;
 		goto cleanup;
 	}
-	if ((xy_pad_in = malloc(xy_pad_count * sizeof(float) * 2)) == NULL) {
+	if ((xy_pad_in = malloc(xy_pad_count * sizeof(double) * 2)) == NULL) {
 		error = CL_OUT_OF_HOST_MEMORY;
 		goto cleanup;
 	}
@@ -48,27 +48,27 @@ PLForwardGeodesicFixedDistanceBuffer *pl_load_forward_geodesic_fixed_distance_da
 	_pl_copy_pad(xy_pad_in, xy_pad_count * 2, xy_in, xy_count * 2);
 	
 	pl_buf->xy_in = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, 
-                                   sizeof(cl_float) * xy_pad_count * 2, xy_pad_in, &error);
+                                   sizeof(cl_double) * xy_pad_count * 2, xy_pad_in, &error);
 	if (error != CL_SUCCESS)
 		goto cleanup;
 	
 	pl_buf->az_in = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, 
-                                   sizeof(cl_float) * az_pad_count, az_pad_in, &error);
+                                   sizeof(cl_double) * az_pad_count, az_pad_in, &error);
 	if (error != CL_SUCCESS)
 		goto cleanup;
 	
 	pl_buf->phi_sincos = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                                        sizeof(cl_float) * xy_pad_count * 2, NULL, &error);
+                                        sizeof(cl_double) * xy_pad_count * 2, NULL, &error);
 	if (error != CL_SUCCESS)
 		goto cleanup;
 	
 	pl_buf->az_sincos = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                                       sizeof(cl_float) * az_pad_count * 2, NULL, &error);
+                                       sizeof(cl_double) * az_pad_count * 2, NULL, &error);
 	if (error != CL_SUCCESS)
 		goto cleanup;
 	
 	pl_buf->xy_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_WRITE_ONLY, 
-									sizeof(cl_float) * xy_count * az_pad_count * 2, NULL, &error);
+									sizeof(cl_double) * xy_count * az_pad_count * 2, NULL, &error);
 	if (error != CL_SUCCESS)
 		goto cleanup;
 	
@@ -107,7 +107,7 @@ void pl_unload_forward_geodesic_fixed_distance_data(PLForwardGeodesicFixedDistan
 }
 
 PLForwardGeodesicFixedAngleBuffer *pl_load_forward_geodesic_fixed_angle_data(PLContext *pl_ctx,
-    const float *dist_in, size_t dist_count, cl_int *outError) {
+    const double *dist_in, size_t dist_count, cl_int *outError) {
     cl_int error;
     
     PLForwardGeodesicFixedAngleBuffer *pl_buf;
@@ -119,11 +119,11 @@ PLForwardGeodesicFixedAngleBuffer *pl_load_forward_geodesic_fixed_angle_data(PLC
     pl_buf->dist_count = dist_count;
     pl_buf->xy_out = NULL;
     
-    float *dist_pad_in;
+    double *dist_pad_in;
     
-    int dist_pad_count = ck_padding(dist_count, PL_FLOAT_VECTOR_SIZE);
+    int dist_pad_count = ck_padding(dist_count, PL_DOUBLE_VECTOR_SIZE);
     
-    if ((dist_pad_in = malloc(dist_pad_count * sizeof(float))) == NULL) {
+    if ((dist_pad_in = malloc(dist_pad_count * sizeof(double))) == NULL) {
         error = CL_OUT_OF_HOST_MEMORY;
         goto cleanup;
     }
@@ -131,12 +131,12 @@ PLForwardGeodesicFixedAngleBuffer *pl_load_forward_geodesic_fixed_angle_data(PLC
     _pl_copy_pad(dist_pad_in, dist_pad_count, dist_in, dist_count);
     
     pl_buf->dist_in = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, 
-                                     sizeof(cl_float) * dist_pad_count, dist_pad_in, &error);
+                                     sizeof(cl_double) * dist_pad_count, dist_pad_in, &error);
     if (error != CL_SUCCESS)
         goto cleanup;
     
     pl_buf->xy_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_WRITE_ONLY, 
-                                    sizeof(cl_float) * dist_pad_count * 2, NULL, &error);
+                                    sizeof(cl_double) * dist_pad_count * 2, NULL, &error);
     if (error != CL_SUCCESS)
         goto cleanup;
     
@@ -163,7 +163,7 @@ void pl_unload_forward_geodesic_fixed_angle_data(PLForwardGeodesicFixedAngleBuff
 }
 
 cl_int pl_forward_geodesic_fixed_distance(PLContext *pl_ctx, PLForwardGeodesicFixedDistanceBuffer *pl_buf,
-        float *xy_out, PLSpheroid pl_ell, double distance) {
+        double *xy_out, PLSpheroid pl_ell, double distance) {
 	cl_kernel sincos_kernel = NULL, sincos1_kernel = NULL, fwd_kernel = NULL;
 	
 	if (_pl_spheroid_is_spherical(pl_ell)) {
@@ -185,8 +185,8 @@ cl_int pl_forward_geodesic_fixed_distance(PLContext *pl_ctx, PLForwardGeodesicFi
 		return CL_INVALID_KERNEL_NAME;
 	}
 	
-	size_t phiVecCount = ck_padding(pl_buf->xy_count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
-	size_t azVecCount = ck_padding(pl_buf->az_count, PL_FLOAT_VECTOR_SIZE) / PL_FLOAT_VECTOR_SIZE;
+	size_t phiVecCount = ck_padding(pl_buf->xy_count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
+	size_t azVecCount = ck_padding(pl_buf->az_count, PL_DOUBLE_VECTOR_SIZE) / PL_DOUBLE_VECTOR_SIZE;
 	
 	cl_int error = CL_SUCCESS;
 	
@@ -219,7 +219,7 @@ cl_int pl_forward_geodesic_fixed_distance(PLContext *pl_ctx, PLForwardGeodesicFi
 }
 
 int pl_forward_geodesic_fixed_angle(PLContext *pl_ctx, PLForwardGeodesicFixedAngleBuffer *pl_buf,
-        float *xy_in, float *xy_out, PLSpheroid pl_ell, double angle) {
+        double *xy_in, double *xy_out, PLSpheroid pl_ell, double angle) {
     double start[2] = { xy_in[0], xy_in[1] };
     cl_kernel fwd_kernel = NULL;
     if (_pl_spheroid_is_spherical(pl_ell)) {
@@ -236,8 +236,8 @@ int pl_forward_geodesic_fixed_angle(PLContext *pl_ctx, PLForwardGeodesicFixedAng
 }
 
 PLInverseGeodesicBuffer *pl_load_inverse_geodesic_data(PLContext *pl_ctx,
-        const float *xy1_in, size_t xy1_count, cl_bool xy1_copy,
-        const float *xy2_in, size_t xy2_count, 
+        const double *xy1_in, size_t xy1_count, cl_bool xy1_copy,
+        const double *xy2_in, size_t xy2_count, 
         cl_int *outError)
 {
 	cl_int error = CL_SUCCESS;
@@ -252,10 +252,10 @@ PLInverseGeodesicBuffer *pl_load_inverse_geodesic_data(PLContext *pl_ctx,
 	pl_buf->xy2_count = xy2_count;
 	pl_buf->dist_out = NULL;
 	
-	float *xy2_pad_in = NULL;
-	int xy2_pad_count = ck_padding(xy2_count, PL_FLOAT_VECTOR_SIZE);
+	double *xy2_pad_in = NULL;
+	int xy2_pad_count = ck_padding(xy2_count, PL_DOUBLE_VECTOR_SIZE);
 	
-	if ((xy2_pad_in = malloc(xy2_pad_count * sizeof(float) * 2)) == NULL) {
+	if ((xy2_pad_in = malloc(xy2_pad_count * sizeof(double) * 2)) == NULL) {
 		error = CL_OUT_OF_HOST_MEMORY;
 		goto cleanup;
 	}
@@ -263,19 +263,19 @@ PLInverseGeodesicBuffer *pl_load_inverse_geodesic_data(PLContext *pl_ctx,
 	_pl_copy_pad(xy2_pad_in, xy2_pad_count * 2, xy2_in, xy2_count * 2);
 	
 	pl_buf->xy1_in = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_ONLY | (xy1_copy ? CL_MEM_COPY_HOST_PTR : CL_MEM_USE_HOST_PTR), 
-									sizeof(cl_float) * xy1_count * 2, (void *)xy1_in, &error);
+									sizeof(cl_double) * xy1_count * 2, (void *)xy1_in, &error);
 	if (error != CL_SUCCESS) {
 		goto cleanup;
 	}
 	
 	pl_buf->xy2_in = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, 
-									sizeof(cl_float) * xy2_pad_count * 2, xy2_pad_in, &error);
+									sizeof(cl_double) * xy2_pad_count * 2, xy2_pad_in, &error);
 	if (error != CL_SUCCESS) {
 		goto cleanup;
 	}
 	
 	pl_buf->dist_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                                      sizeof(cl_float) * xy1_count * xy2_pad_count * 2, NULL, &error);
+                                      sizeof(cl_double) * xy1_count * xy2_pad_count * 2, NULL, &error);
 	if (error != CL_SUCCESS) {
 		goto cleanup;
 	}
@@ -306,7 +306,7 @@ void pl_unload_inverse_geodesic_data(PLInverseGeodesicBuffer *pl_buf) {
 	free(pl_buf);
 }
 
-cl_int pl_inverse_geodesic(PLContext *pl_ctx, PLInverseGeodesicBuffer *pl_buf, float *dist_out,
+cl_int pl_inverse_geodesic(PLContext *pl_ctx, PLInverseGeodesicBuffer *pl_buf, double *dist_out,
         PLSpheroid pl_ell, double scale) {
 	cl_kernel inv_kernel = NULL;
 	

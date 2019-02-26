@@ -7,7 +7,10 @@
  *
  */
 
+// This number is actually the number of entries processed by one
+// kernel run, which is the same for both single and double
 #define PL_FLOAT_VECTOR_SIZE 8
+#define PL_DOUBLE_VECTOR_SIZE 8
 #define ck_padding(n, size) (((n)+(size)-1)/(size)*(size))
 
 typedef enum PLDatum {
@@ -65,7 +68,8 @@ typedef enum PLProjection_e {
     PL_PROJECT_OBLIQUE_STEREOGRAPHIC,
     PL_PROJECT_ROBINSON,
     PL_PROJECT_TRANSVERSE_MERCATOR,
-    PL_PROJECT_WINKEL_TRIPEL
+    PL_PROJECT_WINKEL_TRIPEL,
+    PL_PROJECT_STEREOGRAPHIC
 } PLProjection;
 
 struct pl_spheroid_info_s {
@@ -85,6 +89,7 @@ struct pl_spheroid_info_s {
 #define PL_MODULE_ROBINSON                      (1 << 10)
 #define PL_MODULE_TRANSVERSE_MERCATOR           (1 << 11)
 #define PL_MODULE_WINKEL_TRIPEL                 (1 << 12)
+#define PL_MODULE_STEREOGRAPHIC                 (1 << 13)
 
 #define PL_MODULE_PROJECTION                    (0xFFFF - 7)
 
@@ -116,6 +121,7 @@ typedef struct PLContext_s {
 	cl_uint		     kernel_count;
 	cl_kernel	    *kernels;
     double           last_time;
+    double           split_time;
 } PLContext;
 
 typedef struct PLProjectionBuffer_s {

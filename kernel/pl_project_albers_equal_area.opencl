@@ -1,19 +1,24 @@
 
-float8 phi1_(float8 qs, float Te, float Tone_es);
+double8 phi1_(double8 qs, double Te, double Tone_es);
 
-float8 phi1_(float8 qs, float Te, float Tone_es) {
+double8 phi1_(double8 qs, double Te, double Tone_es) {
 	int i;
-	float8 Phi, sinphi, cosphi, con, com, dphi;
+	double8 Phi, sinphi, cosphi, con, com, dphi;
 
-	Phi = asin(.5f * qs);
+	Phi = asin(.5 * qs);
+	if (Te < EPS7)
+		return( Phi );
 	
 	i = ALBERS_EQUAL_AREA_N_ITER;
 	
 	do {
 		sinphi = sincos(Phi, &cosphi);
 		con = Te * sinphi;
-		com = 1.f - con * con;
-		dphi = .5f * com * com / cosphi * (qs / Tone_es - sinphi / com - atanh(con) / Te); 
+		com = 1. - con * con;
+		dphi = .5 * com * com / cosphi * (qs / Tone_es - sinphi / com - atanh(con) / Te);
+		/* dphi = .5 * com * com / cosphi * (qs / Tone_es -
+		   sinphi / com + .5 / Te * log ((1. - con) /
+		   (1. + con))); */
 		Phi += dphi;
 	} while (any(fabs(dphi) > TOL7) && --i);
 	
@@ -21,27 +26,27 @@ float8 phi1_(float8 qs, float Te, float Tone_es) {
 }
 
 __kernel void pl_project_albers_equal_area_s(
-	__global float16 *xy_in,
-	__global float16 *xy_out,
+	__global double16 *xy_in,
+	__global double16 *xy_out,
 	const unsigned int count,
 	
-    float scale,
-    float x0,
-    float y0,
+    double scale,
+    double x0,
+    double y0,
 
-	float lambda0,
-	float rho0,
-	float c,
-	float n
+	double lambda0,
+	double rho0,
+	double c,
+	double n
 ) {
 	int i = get_global_id(0);
 	
-	float8 lambda = radians(xy_in[i].even) - lambda0;
-	float8 phi    = radians(xy_in[i].odd);
+	double8 lambda = radians(xy_in[i].even) - lambda0;
+	double8 phi    = radians(xy_in[i].odd);
 	
-	float8 x, y;
+	double8 x, y;
 	
-	float8 rho, sinLambda, cosLambda;
+	double8 rho, sinLambda, cosLambda;
 
 	rho = sqrt(c - 2 * n * sin(phi)) / n;
 
@@ -55,64 +60,64 @@ __kernel void pl_project_albers_equal_area_s(
 }
 
 __kernel void pl_unproject_albers_equal_area_s(
-	__global float16 *xy_in,
-	__global float16 *xy_out,
+	__global double16 *xy_in,
+	__global double16 *xy_out,
 	const unsigned int count,
 	
-    float scale,
-    float x0,
-    float y0,
+    double scale,
+    double x0,
+    double y0,
 
-	float lambda0,
-	float rho0,
-	float c,
-	float n
+	double lambda0,
+	double rho0,
+	double c,
+	double n
 ) {
 	int i = get_global_id(0);
 	
-	float8 x = (xy_in[i].even - x0) / scale;
-	float8 y = (xy_in[i].odd - y0) / scale;
+	double8 x = (xy_in[i].even - x0) / scale;
+	double8 y = (xy_in[i].odd - y0) / scale;
 	
-	float8 lambda, phi;
+	double8 lambda, phi;
 	
 	y = rho0 - y;
 
-    phi = 0.5f * (c / n - (x * x + y * y) * n);
+    phi = 0.5 * (c / n - (x * x + y * y) * n);
 	
-	phi = select(copysign(M_PI_2F, phi), asin(phi), fabs(phi) <= 1.f);
-	lambda = atan2(x * copysign(1.f, n), y * copysign(1.f, n)) / n;
+	phi = select(copysign(M_PI_2F, phi), asin(phi), fabs(phi) <= 1.);
+	lambda = atan2(x * copysign((double)1., n), y * copysign((double)1., n)) / n;
 	
 	xy_out[i].even = degrees(pl_mod_pi(lambda + lambda0));
 	xy_out[i].odd = degrees(phi);
 }
 
 __kernel void pl_project_albers_equal_area_e(
-	__global float16 *xy_in,
-	__global float16 *xy_out,
+	__global double16 *xy_in,
+	__global double16 *xy_out,
 	const unsigned int count,
 	
-	float ecc,
-	float ecc2,
-	float one_ecc2,
+	double ecc,
+	double ecc2,
+	double one_ecc2,
 	
-	float ec,
+	double ec,
 	
-    float scale,
-    float x0,
-    float y0,
-	float lambda0,
-	float rho0,
-	float c,
-	float n
+    double scale,
+    double x0,
+    double y0,
+	double lambda0,
+	double rho0,
+	double c,
+	double n
 ) {
 	int i = get_global_id(0);
 	
-	float8 lambda = radians(xy_in[i].even) - lambda0;
-	float8 phi    = radians(xy_in[i].odd);
+	double8 lambda = radians(xy_in[i].even) - lambda0;
+	double8 phi    = radians(xy_in[i].odd);
 	
-	float8 x, y;
+	double8 x, y;
 	
-	float8 rho, sinLambda, cosLambda;
+	double8 rho, sinLambda, cosLambda;
 
 	rho = sqrt(c - n * pl_qsfn(sin(phi), ecc, one_ecc2)) / n;
 
@@ -126,38 +131,38 @@ __kernel void pl_project_albers_equal_area_e(
 }
 
 __kernel void pl_unproject_albers_equal_area_e(
-	__global float16 *xy_in,
-	__global float16 *xy_out,
+	__global double16 *xy_in,
+	__global double16 *xy_out,
 	const unsigned int count,
 	
-	float ecc,
-	float ecc2,
-	float one_ecc2,
+	double ecc,
+	double ecc2,
+	double one_ecc2,
 	
-	float ec,
+	double ec,
 	
-    float scale,
-    float x0,
-    float y0,
+    double scale,
+    double x0,
+    double y0,
 
-	float lambda0,
-	float rho0,
-	float c,
-	float n
+	double lambda0,
+	double rho0,
+	double c,
+	double n
 ) {
 	int i = get_global_id(0);
 	
-	float8 x = (xy_in[i].even - x0) / scale;
-	float8 y = (xy_in[i].odd - y0) / scale;
+	double8 x = (xy_in[i].even - x0) / scale;
+	double8 y = (xy_in[i].odd - y0) / scale;
 	
-	float8 lambda, phi;
+	double8 lambda, phi;
 	
 	y = rho0 - y;
 
 	phi = (c / n - (x * x + y * y) * n);
 	
 	phi = select(copysign(M_PI_2F, phi), phi1_(phi, ecc, one_ecc2), fabs(ec - fabs(phi)) > TOL7);
-	lambda = atan2(x * copysign(1.f, n), y * copysign(1.f, n)) / n;
+	lambda = atan2(x * copysign((double)1., n), y * copysign((double)1., n)) / n;
 	
 	xy_out[i].even = degrees(pl_mod_pi(lambda + lambda0));
 	xy_out[i].odd = degrees(phi);

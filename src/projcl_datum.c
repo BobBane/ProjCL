@@ -13,17 +13,17 @@
 #include "projcl_util.h"
 
 PLDatumShiftBuffer *pl_load_datum_shift_data(PLContext *pl_ctx, PLSpheroid src_spheroid, 
-        const float *xy, size_t n, cl_int *outError) {
+        const double *xy, size_t n, cl_int *outError) {
     PLDatumShiftBuffer *pl_buf = NULL;
     
     cl_int error = CL_SUCCESS;
     
-    float *xy_pad_in = NULL;
-    int xy_pad_count = ck_padding(n, PL_FLOAT_VECTOR_SIZE);
+    double *xy_pad_in = NULL;
+    int xy_pad_count = ck_padding(n, PL_DOUBLE_VECTOR_SIZE);
     
     cl_mem xy_in = NULL, x_rw = NULL, y_rw = NULL, z_rw = NULL;
     
-    if ((xy_pad_in = malloc(xy_pad_count * sizeof(float) * 2)) == NULL) {
+    if ((xy_pad_in = malloc(xy_pad_count * sizeof(double) * 2)) == NULL) {
         error = CL_OUT_OF_HOST_MEMORY;
         goto cleanup;
     }
@@ -31,23 +31,23 @@ PLDatumShiftBuffer *pl_load_datum_shift_data(PLContext *pl_ctx, PLSpheroid src_s
     _pl_copy_pad(xy_pad_in, xy_pad_count * 2, xy, n * 2);
         
     xy_in = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                           sizeof(cl_float) * xy_pad_count * 2, xy_pad_in, &error);
+                           sizeof(cl_double) * xy_pad_count * 2, xy_pad_in, &error);
     if (error != CL_SUCCESS) {
         goto cleanup;
     }
     
     x_rw = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                            sizeof(cl_float) * xy_pad_count, NULL, &error);
+                            sizeof(cl_double) * xy_pad_count, NULL, &error);
     if (error != CL_SUCCESS) {
         goto cleanup;
     }
     y_rw = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                          sizeof(cl_float) * xy_pad_count, NULL, &error);
+                          sizeof(cl_double) * xy_pad_count, NULL, &error);
     if (error != CL_SUCCESS) {
         goto cleanup;
     }
     z_rw = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                          sizeof(cl_float) * xy_pad_count, NULL, &error);
+                          sizeof(cl_double) * xy_pad_count, NULL, &error);
     if (error != CL_SUCCESS) {
         goto cleanup;
     }
@@ -71,7 +71,7 @@ PLDatumShiftBuffer *pl_load_datum_shift_data(PLContext *pl_ctx, PLSpheroid src_s
     error = pl_run_kernel_geodesic_to_cartesian(pl_ctx, cartesian_kernel, pl_buf, src_spheroid);
     
     pl_buf->xy_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_WRITE_ONLY, 
-                                    sizeof(cl_float) * xy_pad_count * 2, NULL, &error);
+                                    sizeof(cl_double) * xy_pad_count * 2, NULL, &error);
     if (error != CL_SUCCESS)
         goto cleanup;
     
@@ -112,7 +112,7 @@ void pl_unload_datum_shift_data(PLDatumShiftBuffer *pl_buf) {
 }
 
 cl_int pl_shift_datum(PLContext *pl_ctx, PLDatum src_datum, PLDatum dst_datum, PLSpheroid dst_spheroid,
-                      PLDatumShiftBuffer *pl_buf, float *xy_out) {
+                      PLDatumShiftBuffer *pl_buf, double *xy_out) {
     cl_int error = CL_SUCCESS;
     cl_kernel transform_kernel = pl_find_kernel(pl_ctx, "pl_cartesian_apply_affine_transform");
     cl_kernel geodesic_kernel = pl_find_kernel(pl_ctx, "pl_cartesian_to_geodesic");

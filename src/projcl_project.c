@@ -14,9 +14,9 @@
 #include <math.h>
 #include <sys/time.h>
 
-PLProjectionBuffer *pl_load_projection_data(PLContext *pl_ctx, const float *xy, size_t count, cl_bool copy, cl_int *outError) {
-	float *xy_pad = NULL;
-	int xy_pad_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE);
+PLProjectionBuffer *pl_load_projection_data(PLContext *pl_ctx, const double *xy, size_t count, cl_bool copy, cl_int *outError) {
+	double *xy_pad = NULL;
+	int xy_pad_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE);
 
 	PLProjectionBuffer *pl_buf = NULL;
 	cl_int error = CL_SUCCESS;
@@ -29,9 +29,9 @@ PLProjectionBuffer *pl_load_projection_data(PLContext *pl_ctx, const float *xy, 
     pl_ctx->last_time = NAN;
 
     if (xy_pad_count == count) {
-        xy_pad = (float *)xy;
+        xy_pad = (double *)xy;
     } else {
-        if ((xy_pad = malloc(xy_pad_count * sizeof(float) * 2)) == NULL) {
+        if ((xy_pad = malloc(xy_pad_count * sizeof(double) * 2)) == NULL) {
             error = CL_OUT_OF_HOST_MEMORY;
             goto cleanup;
         }
@@ -45,12 +45,12 @@ PLProjectionBuffer *pl_load_projection_data(PLContext *pl_ctx, const float *xy, 
 	}
 	
 	pl_buf->xy_in = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_ONLY | (copy ? CL_MEM_COPY_HOST_PTR : CL_MEM_USE_HOST_PTR), 
-								   sizeof(cl_float) * xy_pad_count * 2, xy_pad, &error);
+								   sizeof(cl_double) * xy_pad_count * 2, xy_pad, &error);
 	if (error != CL_SUCCESS) {
 		goto cleanup;
 	}
 	
-	pl_buf->xy_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_WRITE_ONLY, sizeof(cl_float) * count * 2, NULL, &error);
+	pl_buf->xy_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_WRITE_ONLY, sizeof(cl_double) * count * 2, NULL, &error);
 	if (error != CL_SUCCESS) {
 		goto cleanup;
 	}
@@ -87,8 +87,8 @@ cleanup:
 // No local padded copies - data is copied to padded buffer,
 //  any pad area in buffer is zeroed out
 //
-PLProjectionBuffer *pl_load_projection_data_2(PLContext *pl_ctx, const float *x, const float *y, size_t count, int *outError) {
-	int xy_pad_count = ck_padding(count, PL_FLOAT_VECTOR_SIZE);
+PLProjectionBuffer *pl_load_projection_data_2(PLContext *pl_ctx, const double *x, const double *y, size_t count, int *outError) {
+	int xy_pad_count = ck_padding(count, PL_DOUBLE_VECTOR_SIZE);
 
 	PLProjectionBuffer *pl_buf = NULL;
 	cl_int error = CL_SUCCESS;
@@ -109,7 +109,7 @@ PLProjectionBuffer *pl_load_projection_data_2(PLContext *pl_ctx, const float *x,
 	// fill it with clEnqueueWriteBufferRect
 	pl_buf->xy_in = clCreateBuffer(pl_ctx->ctx,
 				       CL_MEM_READ_ONLY,
-				       sizeof(cl_float) * xy_pad_count * 2,
+				       sizeof(cl_double) * xy_pad_count * 2,
 				       NULL,
 				       &error);
 	if (error != CL_SUCCESS) {
@@ -117,7 +117,7 @@ PLProjectionBuffer *pl_load_projection_data_2(PLContext *pl_ctx, const float *x,
 	}
 	size_t buffer_origin[3] = {0,0,0};
 	size_t host_origin[3] = {0,0,0};
-	size_t bh_region[3] = {sizeof(float), count, 1};
+	size_t bh_region[3] = {sizeof(double), count, 1};
 	// First, the x's
 	error = clEnqueueWriteBufferRect(pl_ctx->queue,
 					 pl_buf->xy_in,
@@ -125,9 +125,9 @@ PLProjectionBuffer *pl_load_projection_data_2(PLContext *pl_ctx, const float *x,
 					 buffer_origin,
 					 host_origin,
 					 bh_region,
-					 2*sizeof(float), // buffer_row_pitch,
+					 2*sizeof(double), // buffer_row_pitch,
 					 0,               // buffer_slice_pitch,
-					 1*sizeof(float), // host_row_pitch,
+					 1*sizeof(double), // host_row_pitch,
 					 0,               // host_slice_pitch,
 					 x,
 					 0,     // num_events_in_wait_list,
@@ -138,16 +138,16 @@ PLProjectionBuffer *pl_load_projection_data_2(PLContext *pl_ctx, const float *x,
 	  goto cleanup;
 	}
 	// Then, the y's, which are like the x's with minor offsets
-	buffer_origin[0] = 1 * sizeof(float);
+	buffer_origin[0] = 1 * sizeof(double);
 	error = clEnqueueWriteBufferRect(pl_ctx->queue,
 					 pl_buf->xy_in,
 					 CL_TRUE,  // non-blocking
 					 buffer_origin,
 					 host_origin,
 					 bh_region,
-					 2*sizeof(float), // buffer_row_pitch,
+					 2*sizeof(double), // buffer_row_pitch,
 					 0,               // buffer_slice_pitch,
-					 1*sizeof(float), // host_row_pitch,
+					 1*sizeof(double), // host_row_pitch,
 					 0,               // host_slice_pitch,
 					 y,
 					 0,       // num_events_in_wait_list,
@@ -177,7 +177,7 @@ PLProjectionBuffer *pl_load_projection_data_2(PLContext *pl_ctx, const float *x,
 	  }
 	}
 	*/
-	pl_buf->xy_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_WRITE_ONLY, sizeof(cl_float) * count * 2, NULL, &error);
+	pl_buf->xy_out = clCreateBuffer(pl_ctx->ctx, CL_MEM_WRITE_ONLY, sizeof(cl_double) * count * 2, NULL, &error);
 	if (error != CL_SUCCESS) {
 		goto cleanup;
 	}
@@ -225,22 +225,22 @@ cl_int pl_compare_projection_buffers(PLContext *pl_ctx, PLProjectionBuffer *pl_b
 
   cl_uint eltcount = 2 * pl_buf_1->count;
 
-  float *bc1 = malloc(sizeof(float) * eltcount);
-  float *bc2 = malloc(sizeof(float) * eltcount);
+  double *bc1 = malloc(sizeof(double) * eltcount);
+  double *bc2 = malloc(sizeof(double) * eltcount);
   if(bc1 == NULL || bc2 == NULL) {
     if(error_string != NULL)
       *error_string = "Could not allocate memory to read buffers";
     return 1;
   }
 
-  cl_int error = pl_read_buffer(pl_ctx->queue, pl_buf_1->xy_in, bc1, eltcount * sizeof(float));
+  cl_int error = pl_read_buffer(pl_ctx->queue, pl_buf_1->xy_in, bc1, eltcount * sizeof(double));
   if(error != CL_SUCCESS) {
     if(error_string != NULL)
       *error_string = "OpenCL error reading buffer 1";
     return error;
   }
 
-  error = pl_read_buffer(pl_ctx->queue, pl_buf_2->xy_in, bc2, eltcount * sizeof(float));
+  error = pl_read_buffer(pl_ctx->queue, pl_buf_2->xy_in, bc2, eltcount * sizeof(double));
   if(error != CL_SUCCESS) {
     if(error_string != NULL)
       *error_string = "OpenCL error reading buffer 2";
@@ -268,7 +268,7 @@ cl_int pl_compare_projection_buffers(PLContext *pl_ctx, PLProjectionBuffer *pl_b
 }
 
 static cl_int _pl_project(PLContext *pl_ctx, PLProjection proj, PLProjectionParams *params,
-        PLProjectionBuffer *pl_buf, float *xy_out, int fwd) {
+        PLProjectionBuffer *pl_buf, double *xy_out, int fwd) {
     struct timeval start_time, end_time;
     cl_kernel kernel = NULL;
     cl_int error = CL_SUCCESS;
@@ -297,7 +297,11 @@ static cl_int _pl_project(PLContext *pl_ctx, PLProjection proj, PLProjectionPara
     if (error != CL_SUCCESS)
         return error;
 
-    error = pl_read_buffer(pl_ctx->queue, pl_buf->xy_out, xy_out, 2 * pl_buf->count * sizeof(cl_float));
+    gettimeofday(&end_time, NULL);
+    pl_ctx->split_time = (end_time.tv_sec + end_time.tv_usec * 1e-6)
+        - (start_time.tv_sec + start_time.tv_usec * 1e-6);
+
+    error = pl_read_buffer(pl_ctx->queue, pl_buf->xy_out, xy_out, 2 * pl_buf->count * sizeof(cl_double));
 
     gettimeofday(&end_time, NULL);
     pl_ctx->last_time = (end_time.tv_sec + end_time.tv_usec * 1e-6)
@@ -307,7 +311,7 @@ static cl_int _pl_project(PLContext *pl_ctx, PLProjection proj, PLProjectionPara
 }
 
 static cl_int _pl_project_2(PLContext *pl_ctx, PLProjection proj, PLProjectionParams *params,
-			    PLProjectionBuffer *pl_buf, float *x_out, float *y_out, int fwd) {
+			    PLProjectionBuffer *pl_buf, double *x_out, double *y_out, int fwd) {
     struct timeval start_time, end_time;
     cl_kernel kernel = NULL;
     cl_int error = CL_SUCCESS;
@@ -336,7 +340,11 @@ static cl_int _pl_project_2(PLContext *pl_ctx, PLProjection proj, PLProjectionPa
     if (error != CL_SUCCESS)
         return error;
 
-    error = pl_read_buffer_2(pl_ctx->queue, pl_buf->xy_out, x_out, y_out, 2 * pl_buf->count * sizeof(cl_float));
+    gettimeofday(&end_time, NULL);
+    pl_ctx->split_time = (end_time.tv_sec + end_time.tv_usec * 1e-6)
+        - (start_time.tv_sec + start_time.tv_usec * 1e-6);
+
+    error = pl_read_buffer_2(pl_ctx->queue, pl_buf->xy_out, x_out, y_out, 2 * pl_buf->count * sizeof(cl_double));
 
     gettimeofday(&end_time, NULL);
     pl_ctx->last_time = (end_time.tv_sec + end_time.tv_usec * 1e-6)
@@ -345,21 +353,21 @@ static cl_int _pl_project_2(PLContext *pl_ctx, PLProjection proj, PLProjectionPa
     return error;
 }
 cl_int pl_project_points_forward(PLContext *pl_ctx, PLProjection proj, PLProjectionParams *params,
-        PLProjectionBuffer *pl_buf, float *xy_out) {
+        PLProjectionBuffer *pl_buf, double *xy_out) {
     return _pl_project(pl_ctx, proj, params, pl_buf, xy_out, 1);
 }
 
 cl_int pl_project_points_reverse(PLContext *pl_ctx, PLProjection proj, PLProjectionParams *params,
-        PLProjectionBuffer *pl_buf, float *xy_out) {
+        PLProjectionBuffer *pl_buf, double *xy_out) {
     return _pl_project(pl_ctx, proj, params, pl_buf, xy_out, 0);
 }
 
 cl_int pl_project_points_forward_2(PLContext *pl_ctx, PLProjection proj, PLProjectionParams *params,
-				   PLProjectionBuffer *pl_buf, float *x_out, float *y_out) {
+				   PLProjectionBuffer *pl_buf, double *x_out, double *y_out) {
   return _pl_project_2(pl_ctx, proj, params, pl_buf, x_out, y_out, 1);
 }
 
 cl_int pl_project_points_reverse_2(PLContext *pl_ctx, PLProjection proj, PLProjectionParams *params,
-				   PLProjectionBuffer *pl_buf, float *x_out, float *y_out) {
+				   PLProjectionBuffer *pl_buf, double *x_out, double *y_out) {
   return _pl_project_2(pl_ctx, proj, params, pl_buf, x_out, y_out, 0);
 }

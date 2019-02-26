@@ -34,6 +34,7 @@
 #define MAX_LON 60.0
 
 #define TEST_2_INTERFACE 1
+#define TEST_SAMPLE 0
 
 typedef struct test_params_s {
   char   name[80];
@@ -334,19 +335,11 @@ test_group_t _test_groups[] = {
 };
 
 int compile_module(PLContext *ctx, unsigned int module, char *name);
-int compare_points(const float *points1, const float *points2, const float *ref_points,
+int compare_points(const double *points1, const double *points2, const double *ref_points,
         int count, char *name, double tolerance, double speedup);
-uint64_t test_american_polyconic(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t test_lambert_azimuthal_equal_area(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t test_lambert_conformal_conic(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t test_mercator(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t test_oblique_stereographic(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t test_robinson(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t test_transverse_mercator(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t test_winkel_tripel(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
-uint64_t run_test_group(test_group_t *group, PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points);
+uint64_t run_test_group(test_group_t *group, PLContext *ctx, PLProjectionBuffer *orig_buf, double *orig_points, double load_time);
 
-int compare_points(const float *points1, const float *points2, const float *ref_points, int count,
+int compare_points(const double *points1, const double *points2, const double *ref_points, int count,
         char *name, double tolerance, double speedup) {
     int i;
     int failures = 0;
@@ -359,6 +352,7 @@ int compare_points(const float *points1, const float *points2, const float *ref_
         double delta_y = fabs(points1[2*i+1] - points2[2*i+1]);
         if (delta_x > tolerance || delta_y > tolerance) {
             failures++;
+	}
             if (delta_x > max_delta_x) {
                 max_delta_x = delta_x;
                 max_delta_x_i = i;
@@ -367,27 +361,27 @@ int compare_points(const float *points1, const float *points2, const float *ref_
                 max_delta_y = delta_y;
                 max_delta_y_i = i;
             }
-        }
+	    // }
     }
-    if (failures) {
+    //if (failures) {
         printf("%d failures\n", failures);
         printf("**** Max longitudinal error: (%f, %f) => (%f, %f)\n"
-               "                             (%f, %f) => (%f, %f) [%.4lf @ %d]\n",
+               "                             (%f, %f) => (%f, %f) [%.4e @ %d]\n",
                ref_points[2*max_delta_x_i], ref_points[2*max_delta_x_i+1], points1[2*max_delta_x_i], points1[2*max_delta_x_i+1],
                ref_points[2*max_delta_x_i], ref_points[2*max_delta_x_i+1], points2[2*max_delta_x_i], points2[2*max_delta_x_i+1],
                max_delta_x, max_delta_x_i);
         printf("**** Max latitudinal error: (%f, %f) => (%f, %f)\n"
-               "                            (%f, %f) => (%f, %f) [%.4lf @ %d]\n",
+               "                            (%f, %f) => (%f, %f) [%.4e @ %d]\n",
                ref_points[2*max_delta_y_i], ref_points[2*max_delta_y_i+1], points1[2*max_delta_y_i], points1[2*max_delta_y_i+1],
                ref_points[2*max_delta_y_i], ref_points[2*max_delta_y_i+1], points2[2*max_delta_y_i], points2[2*max_delta_y_i+1],
                max_delta_y, max_delta_y_i);
-    } else {
+	//} else {
         if (isnan(speedup)) {
             printf("ok\n");
         } else {
             printf("ok (%.1lfX faster)\n", speedup);
         }
-    }
+	//}
 
     return failures;
 }
@@ -396,7 +390,7 @@ int compile_module(PLContext *ctx, unsigned int module, char *name) {
     PLCode *code = NULL;
     cl_int error = CL_SUCCESS;
     printf("-- %s... ", name);
-    code = pl_compile_code(ctx, "kernel", module, &error);
+    code = pl_compile_code(ctx, module, &error);
     if (code == NULL) {
         printf("failed (%d)\n", error);
         return 1;
@@ -435,14 +429,17 @@ int main(int argc, char **argv) {
     compile_failures += compile_module(ctx, PL_MODULE_ROBINSON, "Robinson");
     compile_failures += compile_module(ctx, PL_MODULE_TRANSVERSE_MERCATOR, "Transverse Mercator");
     compile_failures += compile_module(ctx, PL_MODULE_WINKEL_TRIPEL, "Winkel Tripel");
+    //compile_failures += compile_module(ctx, PL_MODULE_STEREOGRAPHIC, "Stereographic");
+#if TEST_SAMPLE
     compile_failures += compile_module(ctx, PL_MODULE_NEAREST_NEIGHBOR, "nearest neighbor");
     compile_failures += compile_module(ctx, PL_MODULE_BILINEAR, "bilinear");
     compile_failures += compile_module(ctx, PL_MODULE_BICUBIC, "bicubic");
     compile_failures += compile_module(ctx, PL_MODULE_QUASI_BICUBIC, "quasi-bicubic");
+#endif
 
     printf("Compilation failures: %d\n", compile_failures);
 
-    code = pl_compile_code(ctx, "kernel", 0xFFFF, &error);
+    code = pl_compile_code(ctx, 0xFFFF, &error);
     error = pl_load_code(ctx, code);
     pl_release_code(code);
     if (error != CL_SUCCESS) {
@@ -450,7 +447,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    float *orig_points = malloc(2*TEST_POINTS*sizeof(float));
+    double *orig_points = malloc(2*TEST_POINTS*sizeof(double));
     int i;
     int offset = 0;
     PLProjectionBuffer *orig_buf = NULL;
@@ -469,9 +466,13 @@ int main(int argc, char **argv) {
         printf("Failed to load points: %d\n", error);
         return 1;
     }
+    // Remember the load time; comparisons with proj.4 really should
+    // take this into account...
+    double pl_load_time = ctx->last_time;
 #if TEST_2_INTERFACE
-    float *orig_points_X =  malloc(TEST_POINTS*sizeof(float));
-    float *orig_points_Y =  malloc(TEST_POINTS*sizeof(float));
+    double pl_load_2_time;
+    double *orig_points_X =  malloc(TEST_POINTS*sizeof(double));
+    double *orig_points_Y =  malloc(TEST_POINTS*sizeof(double));
 
     offset = 0;
     for(i=0; i<TEST_POINTS;i++) {
@@ -485,6 +486,9 @@ int main(int argc, char **argv) {
         printf("Failed to load points for _2: %d\n", error);
         return 1;
     }
+    pl_load_2_time = ctx->last_time;
+    printf("load_2_time/load_time = %f\n", pl_load_2_time/pl_load_time);
+
     char *error_message = NULL;
     int fail_count = pl_compare_projection_buffers(ctx, orig_buf, orig_buf_2, &error_message);
     if (fail_count != 0) {
@@ -502,10 +506,10 @@ int main(int argc, char **argv) {
         test_group_t *group = &_test_groups[g];
         printf("\nTesting consistency of %s\n", group->label);
 
-        test_failures += run_test_group(group, ctx, orig_buf, orig_points);
+        test_failures += run_test_group(group, ctx, orig_buf, orig_points, pl_load_time);
 #if TEST_2_INTERFACE
 	printf("\nTesting again with X/Y interface...\n");
-	test_failures += run_test_group(group, ctx, orig_buf_2, orig_points);
+	test_failures += run_test_group(group, ctx, orig_buf_2, orig_points, pl_load_2_time);
 #endif
     }
 
@@ -526,12 +530,12 @@ int main(int argc, char **argv) {
 
     return test_failures > 0;
 }
-int compare_proj4_inv(const float *proj_points, const float *orig_points,
+int compare_proj4_inv(const double *proj_points, const double *orig_points,
         const char *desc1, const char *desc2, double projcl_secs) {
     int failures = 0;
 #ifdef HAVE_PROJ4
     double points_proj4[2*TEST_POINTS];
-    float orig_points_proj4[2*TEST_POINTS];
+    double orig_points_proj4[2*TEST_POINTS];
     projPJ pj_out, pj_in;
     int i;
     int error;
@@ -581,12 +585,12 @@ int compare_proj4_inv(const float *proj_points, const float *orig_points,
     return failures;
 }
 
-int compare_proj4_fwd(const float *orig_points, const float *proj_points,
+int compare_proj4_fwd(const double *orig_points, const double *proj_points,
         const char *desc1, const char *desc2, double projcl_secs) {
     int failures = 0;
 #ifdef HAVE_PROJ4
     double points_proj4[2*TEST_POINTS];
-    float proj_points_proj4[2*TEST_POINTS];
+    double proj_points_proj4[2*TEST_POINTS];
     projPJ pj_out, pj_in;
     int i;
     int error;
@@ -654,20 +658,21 @@ int sprintf_proj4(char *buf, const char *name, test_params_t *params) {
     return 0;
 }
 
-uint64_t run_test_group(test_group_t *group, PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points) {
+uint64_t run_test_group(test_group_t *group, PLContext *ctx, PLProjectionBuffer *orig_buf, double *orig_points, double load_time) {
     int error = CL_SUCCESS;
     uint64_t consistency_failures = 0, proj4_mismatches = 0;
     PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
+    double *proj_points = malloc(2*TEST_POINTS * sizeof(double));
+    double *orig_points2 = malloc(2*TEST_POINTS * sizeof(double));
 #if TEST_2_INTERFACE
-    float *proj_pointsX = malloc(TEST_POINTS * sizeof(float));
-    float *proj_pointsY = malloc(TEST_POINTS * sizeof(float));
+    double *proj_pointsX = malloc(TEST_POINTS * sizeof(double));
+    double *proj_pointsY = malloc(TEST_POINTS * sizeof(double));
 #endif
-    float orig_points2[2*TEST_POINTS];
     int i;
     char orig_string[80];
     char proj_string[80];
     double fwd_secs, inv_secs;
+    double split_secs;
     PLProjectionParams *params = pl_params_init();
 
     for (i=0; i<10 && group->tests[i].name[0]; i++) {
@@ -684,6 +689,7 @@ uint64_t run_test_group(test_group_t *group, PLContext *ctx, PLProjectionBuffer 
         error = pl_project_points_forward(ctx, group->proj, params, orig_buf, proj_points);
         if (error == CL_SUCCESS) {
             fwd_secs = ctx->last_time;
+	    split_secs = ctx->split_time;
         } else {
             printf("** Error Projecting: %d **\n", error);
             fwd_secs = NAN;
@@ -693,10 +699,14 @@ uint64_t run_test_group(test_group_t *group, PLContext *ctx, PLProjectionBuffer 
 	// Now the x/y way
 	error = pl_project_points_forward_2(ctx, group->proj, params, orig_buf, proj_pointsX, proj_pointsY);
         if (error == CL_SUCCESS) {
-	  //fwd_secs = ctx->last_time;
+	  double fwd_secs_2 = ctx->last_time;
+	  double split_secs_2 = ctx->split_time;
+	  printf("Split ratio: %f\n", split_secs_2/split_secs);
+	  printf("buffer_read_2/buffer_read = %f\n", (fwd_secs_2 - split_secs_2)/(fwd_secs - split_secs));
+	  printf("fwd_secs_2/fwd_secs = %f\n", fwd_secs_2/fwd_secs);
+	  
         } else {
             printf("** Error Projecting X/Y: %d **\n", error);
-            //fwd_secs = NAN;
         }
 	// Compare output buffers - normal interleaved should match X/Y
 	// (including NaNs...)
@@ -738,347 +748,20 @@ uint64_t run_test_group(test_group_t *group, PLContext *ctx, PLProjectionBuffer 
         sprintf_proj4(orig_string, "latlong", test);
         sprintf_proj4(proj_string, group->proj4_name, test);
 
+	printf("ORIG: %s\n", orig_string);
+	printf("PROJ: %s\n", proj_string);
         proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
+                orig_string, proj_string, fwd_secs + load_time);
         proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
+                proj_string, orig_string, inv_secs + load_time);
     }
 
 #if TEST_2_INTERFACE
     free(proj_pointsY);
     free(proj_pointsX);
 #endif
+    free(orig_points2);
+    free(proj_points);
 
     return consistency_failures + (proj4_mismatches << 32);
 }
-
-/*
-uint64_t test_american_polyconic(PLContext *ctx, 
-        PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-    double fwd_secs, inv_secs;
-
-    for (i=0; i<sizeof(american_polyconic_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = american_polyconic_tests[i];
-
-        error = pl_project_american_polyconic(ctx, orig_buf, proj_points, 
-              test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_american_polyconic(ctx, proj_buf, orig_points2, 
-                test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, "poly", test);
-
-        proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-
-uint64_t test_lambert_azimuthal_equal_area(PLContext *ctx, 
-        PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-    double fwd_secs, inv_secs;
-
-    for (i=0; i<sizeof(lambert_azimuthal_equal_area_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = lambert_azimuthal_equal_area_tests[i];
-
-        error = pl_project_lambert_azimuthal_equal_area(ctx, orig_buf, proj_points, 
-              test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_lambert_azimuthal_equal_area(ctx, proj_buf, orig_points2, 
-                test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, "laea", test);
-
-        proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-
-uint64_t test_lambert_conformal_conic(PLContext *ctx, 
-        PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-    double fwd_secs, inv_secs;
-
-    for (i=0; i<sizeof(lambert_conformal_conic_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = lambert_conformal_conic_tests[i];
-
-        error = pl_project_lambert_conformal_conic(ctx, orig_buf, proj_points, 
-              test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0, test.rlat1, test.rlat2);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_lambert_conformal_conic(ctx, proj_buf, orig_points2, 
-                test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0, test.rlat1, test.rlat2);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, "lcc", test);
-
-        consistency_failures += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        consistency_failures += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-
-uint64_t test_mercator(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-    double fwd_secs, inv_secs;
-
-    for (i=0; i<sizeof(mercator_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = mercator_tests[i];
-
-        error = pl_project_mercator(ctx, orig_buf, proj_points, test.ell, 1.0, 0.0, 0.0);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_mercator(ctx, proj_buf, orig_points2, test.ell, 1.0, 0.0, 0.0);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, "merc", test);
-
-        proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-
-uint64_t test_oblique_stereographic(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-    double fwd_secs, inv_secs;
-
-    for (i=0; i<sizeof(oblique_stereographic_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = oblique_stereographic_tests[i];
-
-        error = pl_project_oblique_stereographic(ctx, orig_buf, proj_points, 
-              test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_oblique_stereographic(ctx, proj_buf, orig_points2, 
-                test.ell, 1.0, 0.0, 0.0, test.lon0, test.lat0);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, "sterea", test);
-
-        proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-
-uint64_t test_robinson(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-    double fwd_secs, inv_secs;
-
-    for (i=0; i<sizeof(robinson_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = robinson_tests[i];
-
-        error = pl_project_robinson(ctx, orig_buf, proj_points, 1.0, 0.0, 0.0);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_robinson(ctx, proj_buf, orig_points2, 1.0, 0.0, 0.0);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, "robin", test);
-        proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-
-uint64_t test_transverse_mercator(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-    double fwd_secs, inv_secs;
-
-    for (i=0; i<sizeof(transverse_mercator_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = transverse_mercator_tests[i];
-
-        error = pl_project_transverse_mercator(ctx, orig_buf, proj_points, 
-              test.ell, 1.0, 0.0, 0.0, test.lon0);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_transverse_mercator(ctx, proj_buf, orig_points2, 
-                test.ell, 1.0, 0.0, 0.0, test.lon0);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, test.ell == PL_SPHEROID_SPHERE ? "tmerc" : "etmerc", test);
-
-        proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-
-uint64_t test_winkel_tripel(PLContext *ctx, PLProjectionBuffer *orig_buf, float *orig_points) {
-    int error = CL_SUCCESS;
-    uint64_t consistency_failures = 0, proj4_mismatches = 0;
-    PLProjectionBuffer *proj_buf = NULL;
-    float proj_points[2*TEST_POINTS];
-    float orig_points2[2*TEST_POINTS];
-    double fwd_secs, inv_secs;
-
-    int i;
-    char orig_string[80];
-    char proj_string[80];
-
-    for (i=0; i<sizeof(winkel_tripel_tests)/sizeof(test_params_t); i++) {
-        test_params_t test = winkel_tripel_tests[i];
-
-        error = pl_project_winkel_tripel(ctx, orig_buf, proj_points, 
-              1.0, 0.0, 0.0, test.lon0, acos(M_2_PI) * RAD_TO_DEG);
-        fwd_secs = ctx->last_time;
-
-        proj_buf = pl_load_projection_data(ctx, proj_points, TEST_POINTS, 1, &error);
-
-        error = pl_unproject_winkel_tripel(ctx, proj_buf, orig_points2, 
-                1.0, 0.0, 0.0, test.lon0, acos(M_2_PI) * RAD_TO_DEG);
-        inv_secs = ctx->last_time;
-
-        pl_unload_projection_data(proj_buf);
-
-        consistency_failures += compare_points(orig_points, orig_points2, proj_points,
-                TEST_POINTS, test.name, DEGREES_TOL, NAN);
-
-        sprintf_proj4(orig_string, "latlong", test);
-        sprintf_proj4(proj_string, "wintri", test);
-
-        proj4_mismatches += compare_proj4_fwd(orig_points, proj_points,
-                orig_string, proj_string, fwd_secs);
-        proj4_mismatches += compare_proj4_inv(proj_points, orig_points2,
-                proj_string, orig_string, inv_secs);
-    }
-
-    return consistency_failures + (proj4_mismatches << 32);
-}
-*/

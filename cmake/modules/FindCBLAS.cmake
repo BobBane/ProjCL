@@ -234,6 +234,19 @@ IF( NOT CBLAS_LIBRARIES )
     )
 ENDIF( NOT CBLAS_LIBRARIES )
 
+# CBLAS from netlib (no make install, needs libblas to test against)
+IF( NOT CBLAS_LIBRARIES )
+  CHECK_ALL_LIBRARIES(
+    CBLAS_LIBRARIES
+    CBLAS
+    cblas_dgemm
+    ""
+    "cblas_LINUX;blas"
+    "cblas.h"
+    TRUE
+    )
+ENDIF( NOT CBLAS_LIBRARIES )
+
 IF(CBLAS_LIBRARIES)
   SET(CBLAS_FOUND TRUE)
 ELSE(CBLAS_LIBRARIES)

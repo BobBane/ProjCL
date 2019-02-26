@@ -120,7 +120,7 @@ PLPointGridBuffer *pl_load_empty_grid(PLContext *pl_ctx, size_t count_x, size_t 
     
     size_t count = ck_padding(count_x * count_y, 8);
     
-    grid->grid = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 2 * sizeof(cl_float) * count, NULL, &error);
+    grid->grid = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 2 * sizeof(cl_double) * count, NULL, &error);
     if (grid->grid == NULL) {
         pl_unload_grid(grid);
         if (outError)
@@ -155,8 +155,8 @@ PLPointGridBuffer *pl_load_grid(PLContext *pl_ctx,
     double size[2] = { width, height };
     
     error |= pl_set_kernel_arg_mem(pl_ctx, load_grid_kernel, argc++, grid->grid);
-    error |= pl_set_kernel_arg_float2(pl_ctx, load_grid_kernel, argc++, origin);
-    error |= pl_set_kernel_arg_float2(pl_ctx, load_grid_kernel, argc++, size);
+    error |= pl_set_kernel_arg_double2(pl_ctx, load_grid_kernel, argc++, origin);
+    error |= pl_set_kernel_arg_double2(pl_ctx, load_grid_kernel, argc++, size);
     
     if (error != CL_SUCCESS) {
         pl_unload_grid(grid);
@@ -196,7 +196,7 @@ cl_int pl_transform_grid(PLContext *pl_ctx, PLPointGridBuffer *src, PLPointGridB
     
     error |= pl_set_kernel_arg_mem(pl_ctx, transform_kernel, argc++, src->grid);
     error |= pl_set_kernel_arg_mem(pl_ctx, transform_kernel, argc++, dst->grid);
-    error |= pl_set_kernel_arg_float8(pl_ctx, transform_kernel, argc++, matrix);
+    error |= pl_set_kernel_arg_double8(pl_ctx, transform_kernel, argc++, matrix);
     
     if (error != CL_SUCCESS) {
         return error;
@@ -214,7 +214,7 @@ cl_int pl_shift_grid_datum(PLContext *pl_ctx, PLPointGridBuffer *src, PLDatum sr
                            PLPointGridBuffer *dst, PLDatum dst_datum, PLSpheroid dst_spheroid) {    
     cl_int error = CL_SUCCESS;
     
-    int xy_pad_count = ck_padding(src->height * src->width, PL_FLOAT_VECTOR_SIZE);
+    int xy_pad_count = ck_padding(src->height * src->width, PL_DOUBLE_VECTOR_SIZE);
     
     cl_mem x_rw = NULL, y_rw = NULL, z_rw = NULL;
     PLDatumShiftBuffer *pl_buf = NULL;
@@ -227,17 +227,17 @@ cl_int pl_shift_grid_datum(PLContext *pl_ctx, PLPointGridBuffer *src, PLDatum sr
         return CL_INVALID_KERNEL_NAME;
 
     x_rw = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                          sizeof(cl_float) * xy_pad_count, NULL, &error);
+                          sizeof(cl_double) * xy_pad_count, NULL, &error);
     if (error != CL_SUCCESS) {
         goto cleanup;
     }
     y_rw = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                          sizeof(cl_float) * xy_pad_count, NULL, &error);
+                          sizeof(cl_double) * xy_pad_count, NULL, &error);
     if (error != CL_SUCCESS) {
         goto cleanup;
     }
     z_rw = clCreateBuffer(pl_ctx->ctx, CL_MEM_READ_WRITE, 
-                          sizeof(cl_float) * xy_pad_count, NULL, &error);
+                          sizeof(cl_double) * xy_pad_count, NULL, &error);
     if (error != CL_SUCCESS) {
         goto cleanup;
     }
