@@ -16,23 +16,27 @@ package gov.nasa.gsfc.drl.opencl.projcl;
 public class ProjCL {
     private static boolean initializedFlag = false;
     static {
-	String initVal = null;
 	//System.err.println("Trying to initialize ProjCL...");
 	try {
 	    System.loadLibrary("projcl_jni_c");
-	    if ((initVal = init()) == null) {
+	   
+	    String initVal = null;
+	    if ((initVal = init()) != null)
+		throw new Exception(initVal);
+	    
+	    Runtime.getRuntime().addShutdownHook (new Thread()
+		{
+		    public void run() { quit(); }
+		}
+		);
+	    initializedFlag = true;
 		//System.err.println("ProjCL initialized");
-		initializedFlag = true;
-		Runtime.getRuntime().addShutdownHook (new Thread()
-		    {
-			public void run() { quit(); }
-		    }
-		    );
-	    }
 	}
-	catch (Exception e) {
-	    System.err.println("ProjCL init failed: " + initVal);
-	    e.printStackTrace();
+	catch (Throwable e) {
+	    System.err.println("ProjCL initialization failed:");
+	    System.err.println(e);
+	    System.err.println("Continuing without ProjCL support.");
+	    // e.printStackTrace();
 	}
     }
 
